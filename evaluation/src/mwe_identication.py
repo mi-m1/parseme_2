@@ -37,20 +37,33 @@ from lighteval.tasks.lighteval_task import LightevalTaskConfig
 from lighteval.tasks.requests import Doc
 # from lighteval.tasks.requests import SamplingMethod
 
+def format_gold(ls):
+    return "\n".join(ls)
 
-ALLOWED = {"LVC.full","LVC.cause","VID","IRV","VPC.full","VPC.semi","MVC","IAV","LS.ICV"}
 
-INSTRUCTIONS = '''You are an NLP tagger for verbal multiword expressions (VMWEs) per PARSEME 1.1.
+example_gold = ['1:MWE', '1;2:MWE', '1;2', '*', '*', '*', '*', '*', '*', '*', '*']
+example_gold_formatted = format_gold(example_gold)
 
-Output exactly one label per input token, on separate lines, same order as the tokens.
-Use this scheme:
-- First token of a VMWE: "<ID>:<LABEL>" (e.g., "1:VID")
-- Subsequent tokens of the same VMWE: "<ID>" (e.g., "1")
-- Not in any VMWE: "*"
-- Multiple VMWEs on the same token: join with ";" (e.g., "1:VID;2:LVC.full")
+INSTRUCTIONS = f'''You are a multilingual NLP tagger for MWEs.
 
-Allowed labels: LVC.full, LVC.cause, VID, IRV, VPC.full, VPC.semi, MVC, IAV, LS.ICV.
+You will be given a sentence, and its corresponding list of tokens.
+
+Output exactly one label per token, as a list, following the same order as the tokens.
+
+Use this scheme to annotate each token:
+- First token of a MWE: “<n>:MWE” where n is the count of MWE
+- Subsequent tokens of the same VMWE: "<n>" (e.g., "1")
+- Not a part of MWE: “*”
+- Multiple MWEs on the same token: join with “;”
+
+Note: There could be multiple MWEs in the sentence.
+
+Here's an example:
+Sentence: Il s'agit d'un affrontement à 5 contre 5.
+Tokens: "['Il', ""s'"", 'agit', ""d'"", 'un', 'affrontement', 'à', '5', 'contre', '5', '.']"
+Output: \n"{example_gold_formatted}"
 '''
+
 
 def format_instance(tokens: List[str]) -> str:
     toks_block = "\n".join(tokens)
@@ -82,16 +95,17 @@ def prompt_fn(line: dict, task_name: str):
     query = (
         f"{INSTRUCTIONS}\n\n"
         f"Tokens: {tokens}\n"
-        f"Your answer: "
+        f"Output: "
     )
-    # The gold goes into Doc.golds for metrics (string-for-string comparison or custom scoring)
-    gold = line["PARSEME:MWE"]
+
     return Doc(
         task_name=task_name,
         query=query,
-        # golds=[gold],
-        choices=gold,
-        gold_index=0,  # Not used in this task
+        # choices=[],  # No predefined choices for generative tasks
+        choices=format_gold(line["PARSEME:MWE"]),
+        gold_index=0,  # Not used for generative tasks
+        sentence_cleaned = line["sentence_text"],
+        specific={"lang":line["lang"]},
         )
 
 prompt_fn_limited = limited_prompt_fn_factory(prompt_fn, limit=100)
@@ -106,17 +120,18 @@ prompt_fn_limited = limited_prompt_fn_factory(prompt_fn, limit=100)
 # attached to it, and one evaluation possible.
 # Simple exact-match first; you can add a custom metric below (section 3).
 task = LightevalTaskConfig(
-    name="parseme_2_dev",
+    name="parseme_2_stripped_dev",
     prompt_function=prompt_fn,
     # prompt_function=prompt_fn_limited,
     suite=["custom"],
-    hf_repo="mmi01/parseme_2_dev",     # or leave blank and pass a local path with --local-dataset
+    hf_repo="mmi01/parseme_2_stripped_dev",     # or leave blank and pass a local path with --local-dataset
     hf_subset=None,
     hf_avail_splits=['SV', 'SL', 'NL', 'EL', 'EGY', 'KA', 'UK', 'FR', 'SR', 'HE', 'FA', 'PT', 'LV', 'RO', 'PL', 'JA'],
-    evaluation_splits=['SV', 'SL', 'NL', 'EL', 'EGY', 'KA', 'UK', 'FR', 'SR', 'HE', 'FA', 'PT', 'LV', 'RO', 'PL', 'JA'],
+    # evaluation_splits=['SV', 'SL', 'NL', 'EL', 'EGY', 'KA', 'UK', 'FR', 'SR', 'HE', 'FA', 'PT', 'LV', 'RO', 'PL', 'JA'],
+    evaluation_splits=["LV", "NL", "PL", "PT", "RO", "SL", "SV"], #latin scripts
     few_shots_split=None,
     few_shots_select=None,
-    metric=[Metrics.exact_match],       # swap/extend with custom metric later
+    metric=[Metrics.exact_match, Metrics.chrf,],       # swap/extend with custom metric later
     generation_size=512,
     stop_sequence=["\n"],                # stops the model after the list
     )
@@ -191,3 +206,7 @@ TASKS_TABLE = [task]
 #     corpus_level_fn=np.mean,  # aggregation
 # )
 # extend_enum(Metrics, "accuracy_per_sample", accuracy_per_sample)
+
+
+# if __name__ == "__main__":
+#     print(INSTRUCTIONS)
